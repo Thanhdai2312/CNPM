@@ -1,0 +1,197 @@
+// Prisma schema for Drone Fastfood (MySQL)
+// Naming: snake_case in db via @@map/ @map where needed, but keep Prisma camelCase for code clarity
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         UserRole @default(CUSTOMER)
+  createdAt    DateTime @default(now())
+  orders       Order[]
+  cart         Cart?
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+  OPERATOR
+}
+
+model Restaurant {
+  id        String    @id @default(cuid())
+  name      String
+  address   String
+  lat       Float
+  lng       Float
+  menuItems MenuItem[]
+  orders    Order[]
+}
+
+model MenuItem {
+  id            String     @id @default(cuid())
+  restaurantId  String
+  restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
+  name          String
+  price         Decimal    @db.Decimal(10,2)
+  weight        Decimal    @db.Decimal(10,2)
+  isAvailable   Boolean    @default(true)
+  orderItems    OrderItem[]
+  cartItems     CartItem[]
+
+  @@index([restaurantId, isAvailable])
+}
+
+model Order {
+  id            String        @id @default(cuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id])
+  restaurantId  String
+  restaurant    Restaurant    @relation(fields: [restaurantId], references: [id])
+  total         Decimal       @db.Decimal(10,2)
+  shippingFee   Decimal       @db.Decimal(10,2)
+  shippingAddress String?
+  destLat       Float?
+  destLng       Float?
+  status        OrderStatus   @default(CREATED)
+  paymentStatus PaymentStatus @default(PENDING)
+  createdAt     DateTime      @default(now())
+  orderItems    OrderItem[]
+  payment       Payment?
+  delivery      Delivery?
+
+  @@index([userId, createdAt])
+  @@index([restaurantId, createdAt])
+}
+
+enum OrderStatus {
+  CREATED
+  CONFIRMED
+  PREPARING
+  DISPATCHED
+  DELIVERING
+  DELIVERED
+  CANCELED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id])
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+  qty       Int
+  price     Decimal @db.Decimal(10,2)
+
+  @@index([orderId])
+  @@index([menuItemId])
+}
+
+model Payment {
+  id       String        @id @default(cuid())
+  orderId  String  @unique
+  order    Order   @relation(fields: [orderId], references: [id])
+  amount   Decimal       @db.Decimal(10,2)
+  provider String
+  status   PaymentStatus @default(PENDING)
+  payload  Json?
+}
+
+model Drone {
+  id            String      @id @default(cuid())
+  code          String      @unique
+  status        DroneStatus @default(AVAILABLE)
+  capacityKg    Decimal     @db.Decimal(10,2)
+  maxRangeKm    Decimal     @db.Decimal(10,2)
+  batteryPercent Int        @default(100)
+  deliveries    Delivery[]
+
+  @@index([status])
+}
+
+enum DroneStatus {
+  AVAILABLE
+  BUSY
+  CHARGING
+  MAINTENANCE
+  OFFLINE
+}
+
+model Delivery {
+  id         String        @id @default(cuid())
+  orderId    String  @unique
+  order      Order   @relation(fields: [orderId], references: [id])
+  droneId    String?
+  drone      Drone?  @relation(fields: [droneId], references: [id])
+  status     DeliveryStatus @default(QUEUED)
+  eta        DateTime?
+  startedAt  DateTime?
+  completedAt DateTime?
+  route      Route?
+
+  @@index([status])
+}
+
+// Cart lưu tách, mỗi user một cart; khi checkout sẽ đọc trực tiếp cartItems
+model Cart {
+  id     String  @id @default(cuid())
+  userId String  @unique
+  user   User    @relation(fields: [userId], references: [id])
+  items  CartItem[]
+}
+
+model CartItem {
+  id       String @id @default(cuid())
+  cartId   String
+  cart     Cart   @relation(fields: [cartId], references: [id])
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+  qty       Int
+
+  @@unique([cartId, menuItemId])
+}
+
+// Lưu log webhook để idempotency
+model WebhookEvent {
+  id              String   @id @default(cuid())
+  idempotencyKey  String   @unique
+  orderId         String
+  receivedAt      DateTime @default(now())
+}
+
+enum DeliveryStatus {
+  QUEUED
+  ASSIGNED
+  EN_ROUTE
+  ARRIVED
+  COMPLETED
+  FAILED
+}
+
+model Route {
+  id         String   @id @default(cuid())
+  deliveryId String   @unique
+  delivery   Delivery @relation(fields: [deliveryId], references: [id])
+  startLat   Float
+  startLng   Float
+  endLat     Float
+  endLng     Float
+  // path lưu dạng JSON đơn giản (list tọa độ)
+  path       Json?
+}
